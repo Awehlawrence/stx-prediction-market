@@ -160,3 +160,79 @@
     (ok sum)
   )
 )
+
+;; Read-only functions
+
+;; Get event details
+(define-read-only (get-event (event-id uint))
+  (map-get? events { event-id: event-id })
+)
+
+;; Get bet details
+(define-read-only (get-bet (event-id uint) (better principal))
+  (map-get? bets { event-id: event-id, better: better })
+)
+
+
+;; Calculate odds for an option
+(define-read-only (calculate-odds (event-id uint) (option uint))
+  (let (
+    (event (unwrap! (map-get? events { event-id: event-id }) u0))
+    (total-bets (get total-bets event))
+    (option-bets (get-total-bets-for-option event-id option))
+  )
+    (if (is-eq option-bets u0)
+      u0
+      (/ (* total-bets u100) option-bets)
+    )
+  )
+)
+
+;; Private functions
+
+;; Get bet amount if the option matches, otherwise return 0
+
+
+
+(define-public (cancel-event (event-id uint))
+  (let ((event (unwrap! (map-get? events { event-id: event-id }) err-invalid-bet)))
+    (asserts! (is-eq tx-sender (get creator event)) err-unauthorized)
+    (asserts! (is-eq (get total-bets event) u0) err-event-not-cancelable)
+    (asserts! (is-none (get winning-option event)) err-event-closed)
+    (asserts! (not (get is-canceled event)) err-event-closed)
+    (map-set events { event-id: event-id }
+      (merge event { is-canceled: true })
+    )
+    (ok true)
+  )
+)
+
+(define-private (is-active-event (event (optional {
+  description: (string-ascii 256),
+  options: (list 10 (string-ascii 64)),
+  total-bets: uint,
+  is-resolved: bool,
+  winning-option: (optional uint),
+  resolution-time: uint,
+  creator: principal,
+  is-canceled: bool
+})))
+  (match event
+    e (and (not (get is-resolved e)) (not (get is-canceled e)) (> (get resolution-time e) (unwrap-panic (get-block-info? time (- block-height u1)))))
+    false
+  )
+)
+
+
+(define-public (refund-bet (event-id uint))
+  (let (
+    (event (unwrap! (map-get? events { event-id: event-id }) err-invalid-bet))
+    (bet (unwrap! (map-get? bets { event-id: event-id, better: tx-sender }) err-invalid-bet))
+  )
+    (asserts! (get is-canceled event) err-event-not-cancelable)
+    (try! (as-contract (stx-transfer? (get amount bet) tx-sender tx-sender)))
+    (map-delete bets { event-id: event-id, better: tx-sender })
+    (ok true)
+  )
+)
+
